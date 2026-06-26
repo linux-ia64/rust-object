@@ -337,6 +337,13 @@ fn parse_relocation<Elf: FileHeader>(
             elf::R_CKCORE_PCREL32 => (K::Relative, g, 32),
             _ => unknown,
         },
+        elf::EM_IA_64 => match r_type {
+            elf::R_IA64_DIR32MSB | elf::R_IA64_DIR32LSB => (K::Absolute, g, 32),
+            elf::R_IA64_DIR64MSB | elf::R_IA64_DIR64LSB => (K::Absolute, g, 64),
+            elf::R_IA64_PCREL32MSB | elf::R_IA64_PCREL32LSB => (K::Relative, g, 32),
+            elf::R_IA64_PCREL64MSB | elf::R_IA64_PCREL64LSB => (K::Relative, g, 64),
+            _ => unknown,
+        },
         elf::EM_MCST_ELBRUS => match r_type {
             elf::R_E2K_32_ABS => (K::Absolute, g, 32),
             elf::R_E2K_64_ABS => (K::Absolute, g, 64),
