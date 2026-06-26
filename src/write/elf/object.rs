@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 
+use crate::endian::Endian;
 use crate::write::elf::writer::*;
 use crate::write::string::StringId;
 use crate::write::*;
@@ -134,6 +135,7 @@ impl<'a> Object<'a> {
             Architecture::X86_64 => true,
             Architecture::X86_64_X32 => true,
             Architecture::Hexagon => true,
+            Architecture::Ia64 => true,
             Architecture::LoongArch64 => true,
             Architecture::M68k => true,
             Architecture::Mips => false,
@@ -211,6 +213,40 @@ impl<'a> Object<'a> {
                 (K::Relative, E::Generic, 32) => elf::R_CKCORE_PCREL32,
                 _ => return unsupported_reloc(),
             },
+            Architecture::Ia64 => {
+                let msb = self.endian.is_big_endian();
+                match (kind, encoding, size) {
+                    (K::Absolute, _, 32) => {
+                        if msb {
+                            elf::R_IA64_DIR32MSB
+                        } else {
+                            elf::R_IA64_DIR32LSB
+                        }
+                    }
+                    (K::Absolute, _, 64) => {
+                        if msb {
+                            elf::R_IA64_DIR64MSB
+                        } else {
+                            elf::R_IA64_DIR64LSB
+                        }
+                    }
+                    (K::Relative, _, 32) => {
+                        if msb {
+                            elf::R_IA64_PCREL32MSB
+                        } else {
+                            elf::R_IA64_PCREL32LSB
+                        }
+                    }
+                    (K::Relative, _, 64) => {
+                        if msb {
+                            elf::R_IA64_PCREL64MSB
+                        } else {
+                            elf::R_IA64_PCREL64LSB
+                        }
+                    }
+                    _ => return unsupported_reloc(),
+                }
+            }
             Architecture::I386 => match (kind, size) {
                 (K::Absolute, 32) => elf::R_386_32,
                 (K::Relative, 32) => elf::R_386_PC32,
@@ -566,6 +602,7 @@ impl<'a> Object<'a> {
             (Architecture::X86_64, None) => elf::EM_X86_64,
             (Architecture::X86_64_X32, None) => elf::EM_X86_64,
             (Architecture::Hexagon, None) => elf::EM_HEXAGON,
+            (Architecture::Ia64, None) => elf::EM_IA_64,
             (Architecture::LoongArch64, None) => elf::EM_LOONGARCH,
             (Architecture::M68k, None) => elf::EM_68K,
             (Architecture::Mips, None) => elf::EM_MIPS,
@@ -603,6 +640,10 @@ impl<'a> Object<'a> {
 
         if self.architecture == Architecture::Mips64_N32 {
             e_flags |= elf::EF_MIPS_ABI2;
+        }
+
+        if self.architecture == Architecture::Ia64 {
+            e_flags |= elf::EF_IA_64_ABI64;
         }
 
         writer.write_file_header(&FileHeader {
