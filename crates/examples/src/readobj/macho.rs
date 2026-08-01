@@ -3,6 +3,19 @@ use object::macho::*;
 use object::read::macho::*;
 use object::BigEndian;
 
+trait PrinterMachoExt {
+    fn field_version(&mut self, name: &str, value: u32);
+}
+
+impl<'a> PrinterMachoExt for Printer<'a> {
+    fn field_version(&mut self, name: &str, value: u32) {
+        let major = (value >> 16) & 0xFFFF;
+        let minor = (value >> 8) & 0xFF;
+        let update = value & 0xFF;
+        self.field(name, format!("{}.{}.{}", major, minor, update));
+    }
+}
+
 pub(super) fn print_dyld_cache(p: &mut Printer<'_>, data: &[u8], subcache_data: &[&[u8]]) {
     print_dyld_subcache(p, data);
     for subcache in subcache_data {
@@ -252,6 +265,7 @@ struct MachState<'a> {
     symbols: Vec<Option<&'a [u8]>>,
     sections: Vec<Vec<u8>>,
     section_index: usize,
+    text_segment_addr: u64,
 }
 
 fn print_macho<Mach: MachHeader<Endian = Endianness>>(
@@ -274,6 +288,9 @@ fn print_macho<Mach: MachHeader<Endian = Endianness>>(
             let mut symtab_command = None;
             while let Ok(Some(command)) = commands.next() {
                 if let Ok(Some((segment, section_data))) = Mach::Segment::from_command(command) {
+                    if segment.name() == macho::SEG_TEXT.as_bytes() {
+                        state.text_segment_addr = segment.vmaddr(endian).into();
+                    }
                     if let Some(cache) = cache {
                         // The symbol table will be in the linkedit segment, but that may be in a
                         // different subcache, so we need to remember the data for that subcache.
@@ -365,6 +382,9 @@ fn print_load_command<Mach: MachHeader>(
             LoadCommandVariant::Symtab(symtab) => {
                 print_symtab::<Mach>(p, endian, state.linkedit_data, symtab, state);
             }
+            LoadCommandVariant::LinkeditData(linkedit) => {
+                print_linkedit_data::<Mach>(p, endian, linkedit, state);
+            }
             _ => {}
         }
         if !p.options.macho_load_commands {
@@ -373,7 +393,8 @@ fn print_load_command<Mach: MachHeader>(
         match variant {
             LoadCommandVariant::Segment32(..)
             | LoadCommandVariant::Segment64(..)
-            | LoadCommandVariant::Symtab(..) => {}
+            | LoadCommandVariant::Symtab(..)
+            | LoadCommandVariant::LinkeditData(..) => {}
             LoadCommandVariant::Thread(x, _thread_data) => {
                 p.group("ThreadCommand", |p| {
                     p.field_enum("Cmd", x.cmd.get(endian), FLAGS_LC);
@@ -417,8 +438,8 @@ fn print_load_command<Mach: MachHeader>(
                             command.string(endian, x.dylib.name),
                         );
                         p.field("Timestamp", x.dylib.timestamp.get(endian));
-                        p.field_hex("CurrentVersion", x.dylib.current_version.get(endian));
-                        p.field_hex(
+                        p.field_version("CurrentVersion", x.dylib.current_version.get(endian));
+                        p.field_version(
                             "CompatibilityVersion",
                             x.dylib.compatibility_version.get(endian),
                         );
@@ -558,14 +579,6 @@ fn print_load_command<Mach: MachHeader>(
                     );
                 });
             }
-            LoadCommandVariant::LinkeditData(x) => {
-                p.group("LinkeditDataCommand", |p| {
-                    p.field_enum("Cmd", x.cmd.get(endian), FLAGS_LC);
-                    p.field_hex("CmdSize", x.cmdsize.get(endian));
-                    p.field_hex("DataOffset", x.dataoff.get(endian));
-                    p.field_hex("DataSize", x.datasize.get(endian));
-                });
-            }
             LoadCommandVariant::EncryptionInfo32(x) => {
                 p.group("EncryptionInfoCommand32", |p| {
                     p.field_enum("Cmd", x.cmd.get(endian), FLAGS_LC);
@@ -606,8 +619,8 @@ fn print_load_command<Mach: MachHeader>(
                 p.group("VersionMinCommand", |p| {
                     p.field_enum("Cmd", x.cmd.get(endian), FLAGS_LC);
                     p.field_hex("CmdSize", x.cmdsize.get(endian));
-                    p.field_hex("Version", x.version.get(endian));
-                    p.field_hex("Sdk", x.sdk.get(endian));
+                    p.field_version("Version", x.version.get(endian));
+                    p.field_version("Sdk", x.sdk.get(endian));
                 });
             }
             LoadCommandVariant::EntryPoint(x) => {
@@ -648,8 +661,8 @@ fn print_load_command<Mach: MachHeader>(
                     p.field_enum("Cmd", x.cmd.get(endian), FLAGS_LC);
                     p.field_hex("CmdSize", x.cmdsize.get(endian));
                     p.field_enum("Platform", x.platform.get(endian), FLAGS_PLATFORM);
-                    p.field_hex("MinOs", x.minos.get(endian));
-                    p.field_hex("Sdk", x.sdk.get(endian));
+                    p.field_version("MinOs", x.minos.get(endian));
+                    p.field_version("Sdk", x.sdk.get(endian));
                     p.field_hex("NumberOfTools", x.ntools.get(endian));
                     // TODO: dump tools
                 });
@@ -878,6 +891,93 @@ fn print_symtab_symbols<Mach: MachHeader>(
                     p.flags(n_desc, 0, FLAGS_N_DESC);
                 }
                 p.field_hex("Value", nlist.n_value(endian).into());
+            });
+        }
+    }
+}
+
+fn print_linkedit_data<Mach: MachHeader>(
+    p: &mut Printer<'_>,
+    endian: Mach::Endian,
+    linkedit: &LinkeditDataCommand<Mach::Endian>,
+    state: &MachState,
+) {
+    let cmd = linkedit.cmd.get(endian);
+    let function_starts = p.options.macho_function_starts && cmd == macho::LC_FUNCTION_STARTS;
+    let exports_trie = p.options.macho_exports_trie && cmd == macho::LC_DYLD_EXPORTS_TRIE;
+    if !p.options.macho_load_commands && !function_starts && !exports_trie {
+        return;
+    }
+    p.group("LinkeditDataCommand", |p| {
+        p.field_enum("Cmd", cmd, FLAGS_LC);
+        p.field_hex("CmdSize", linkedit.cmdsize.get(endian));
+        p.field_hex("DataOffset", linkedit.dataoff.get(endian));
+        p.field_hex("DataSize", linkedit.datasize.get(endian));
+        if function_starts {
+            print_function_starts::<Mach>(p, endian, linkedit, state);
+        }
+        if exports_trie {
+            print_exports_trie::<Mach>(p, endian, linkedit, state);
+        }
+    });
+}
+
+fn print_function_starts<Mach: MachHeader>(
+    p: &mut Printer<'_>,
+    endian: Mach::Endian,
+    linkedit: &LinkeditDataCommand<Mach::Endian>,
+    state: &MachState,
+) {
+    let Some(mut function_starts) = linkedit
+        .function_starts(endian, state.linkedit_data, state.text_segment_addr)
+        .print_err(p)
+    else {
+        return;
+    };
+    p.group("FunctionStarts", |p| {
+        while let Some(Some(addr)) = function_starts.next().print_err(p) {
+            p.field_hex("Address", addr);
+        }
+    });
+}
+
+fn print_exports_trie<Mach: MachHeader>(
+    p: &mut Printer<'_>,
+    endian: Mach::Endian,
+    linkedit: &LinkeditDataCommand<Mach::Endian>,
+    state: &MachState,
+) {
+    if let Some(mut exports_trie) = linkedit
+        .exports_trie(endian, state.linkedit_data)
+        .print_err(p)
+    {
+        while let Some(Some(export_symbol)) = exports_trie.next().print_err(p) {
+            p.group("ExportSymbol", |p| {
+                p.field_inline_string("Name", export_symbol.name());
+                p.field_hex("Flags", export_symbol.flags());
+                p.flags(export_symbol.flags(), 0, FLAGS_EXPORT_SYMBOL);
+                p.flags(
+                    export_symbol.flags(),
+                    EXPORT_SYMBOL_FLAGS_KIND_MASK,
+                    FLAGS_EXPORT_SYMBOL_KIND,
+                );
+                match export_symbol.data() {
+                    ExportData::Regular { address } => p.field_hex("Address", address),
+                    ExportData::Reexport {
+                        dylib_ordinal,
+                        import_name,
+                    } => {
+                        p.field_hex("DylibOrdinal", dylib_ordinal);
+                        p.field_inline_string("ImportName", import_name);
+                    }
+                    ExportData::StubAndResolver {
+                        stub_address,
+                        resolver_address,
+                    } => {
+                        p.field_hex("StubAddress", stub_address);
+                        p.field_hex("ResolverAddress", resolver_address);
+                    }
+                }
             });
         }
     }
@@ -1295,4 +1395,14 @@ const FLAGS_X86_64_RELOC: &[Flag<u8>] = &flags!(
     X86_64_RELOC_SIGNED_2,
     X86_64_RELOC_SIGNED_4,
     X86_64_RELOC_TLV,
+);
+const FLAGS_EXPORT_SYMBOL: &[Flag<u8>] = &flags!(
+    EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION,
+    EXPORT_SYMBOL_FLAGS_REEXPORT,
+    EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER,
+);
+const FLAGS_EXPORT_SYMBOL_KIND: &[Flag<u8>] = &flags!(
+    EXPORT_SYMBOL_FLAGS_KIND_REGULAR,
+    EXPORT_SYMBOL_FLAGS_KIND_THREAD_LOCAL,
+    EXPORT_SYMBOL_FLAGS_KIND_ABSOLUTE,
 );

@@ -128,6 +128,7 @@ fn print_program_headers<Elf: FileHeader>(
                 EM_PARISC => FLAGS_PT_PARISC,
                 EM_ARM => FLAGS_PT_ARM,
                 EM_IA_64 => FLAGS_PT_IA_64,
+                EM_RISCV => FLAGS_PT_RISCV,
                 _ => &[],
             };
             let os = match elf.e_ident().os_abi {
@@ -272,6 +273,7 @@ fn print_section_headers<Elf: FileHeader>(
                 EM_CSKY => FLAGS_SHT_CSKY,
                 EM_IA_64 => FLAGS_SHT_IA_64,
                 EM_X86_64 => FLAGS_SHT_X86_64,
+                EM_RISCV => FLAGS_SHT_RISCV,
                 _ => &[],
             };
             p.field_enums("Type", section.sh_type(endian), &[FLAGS_SHT, proc]);
@@ -426,6 +428,8 @@ fn print_section_symbols<Elf: FileHeader>(
                     match elf.e_machine(endian) {
                         EM_MIPS => p.flags(other, 0, FLAGS_STO_MIPS),
                         EM_ALPHA => p.flags(other, 0, FLAGS_STO_ALPHA),
+                        EM_AARCH64 => p.flags(other, 0, FLAGS_STO_AARCH64),
+                        EM_RISCV => p.flags(other, 0, FLAGS_STO_RISCV),
                         EM_PPC64 => p.field_hex(
                             "Local",
                             (other & STO_PPC64_LOCAL_MASK) >> STO_PPC64_LOCAL_BIT,
@@ -778,7 +782,9 @@ fn print_dynamic<Elf: FileHeader>(
         EM_PPC => FLAGS_DT_PPC,
         EM_PPC64 => FLAGS_DT_PPC64,
         EM_IA_64 => FLAGS_DT_IA_64,
+        EM_AARCH64 => FLAGS_DT_AARCH64,
         EM_ALTERA_NIOS2 => FLAGS_DT_NIOS2,
+        EM_RISCV => FLAGS_DT_RISCV,
         _ => &[],
     };
     for d in dynamic {
@@ -1410,6 +1416,7 @@ const FLAGS_PT_MIPS: &[Flag<u32>] = &flags!(
 const FLAGS_PT_PARISC: &[Flag<u32>] = &flags!(PT_PARISC_ARCHEXT, PT_PARISC_UNWIND);
 const FLAGS_PT_ARM: &[Flag<u32>] = &flags!(PT_ARM_EXIDX);
 const FLAGS_PT_IA_64: &[Flag<u32>] = &flags!(PT_IA_64_ARCHEXT, PT_IA_64_UNWIND);
+const FLAGS_PT_RISCV: &[Flag<u32>] = &flags!(PT_RISCV_ATTRIBUTES);
 const FLAGS_PF: &[Flag<u32>] = &flags!(PF_X, PF_W, PF_R);
 const FLAGS_PF_HP: &[Flag<u32>] = &flags!(
     PF_HP_PAGE_SIZE,
@@ -1503,6 +1510,7 @@ const FLAGS_SHT_ARM: &[Flag<u32>] = &flags!(SHT_ARM_EXIDX, SHT_ARM_PREEMPTMAP, S
 const FLAGS_SHT_CSKY: &[Flag<u32>] = &flags!(SHT_CSKY_ATTRIBUTES);
 const FLAGS_SHT_IA_64: &[Flag<u32>] = &flags!(SHT_IA_64_EXT, SHT_IA_64_UNWIND);
 const FLAGS_SHT_X86_64: &[Flag<u32>] = &flags!(SHT_X86_64_UNWIND);
+const FLAGS_SHT_RISCV: &[Flag<u32>] = &flags!(SHT_RISCV_ATTRIBUTES);
 const FLAGS_SHF: &[Flag<u32>] = &flags!(
     SHF_WRITE,
     SHF_ALLOC,
@@ -1554,6 +1562,8 @@ const FLAGS_STB_MIPS: &[Flag<u8>] = &flags!(STB_MIPS_SPLIT_COMMON);
 const FLAGS_STV: &[Flag<u8>] = &flags!(STV_DEFAULT, STV_INTERNAL, STV_HIDDEN, STV_PROTECTED);
 const FLAGS_STO_MIPS: &[Flag<u8>] = &flags!(STO_MIPS_PLT);
 const FLAGS_STO_ALPHA: &[Flag<u8>] = &flags!(STO_ALPHA_NOPV, STO_ALPHA_STD_GPLOAD);
+const FLAGS_STO_AARCH64: &[Flag<u8>] = &flags!(STO_AARCH64_VARIANT_PCS);
+const FLAGS_STO_RISCV: &[Flag<u8>] = &flags!(STO_RISCV_VARIANT_CC);
 const FLAGS_SHN: &[Flag<u16>] = &flags!(SHN_UNDEF, SHN_ABS, SHN_COMMON, SHN_XINDEX);
 const FLAGS_SHN_MIPS: &[Flag<u16>] = &flags!(
     SHN_MIPS_ACOMMON,
@@ -3252,6 +3262,8 @@ const FLAGS_R_LOONGARCH: &[Flag<u32>] = &flags!(
     R_LARCH_TLS_TPREL32,
     R_LARCH_TLS_TPREL64,
     R_LARCH_IRELATIVE,
+    R_LARCH_TLS_DESC32,
+    R_LARCH_TLS_DESC64,
     R_LARCH_MARK_LA,
     R_LARCH_MARK_PCREL,
     R_LARCH_SOP_PUSH_PCREL,
@@ -3354,6 +3366,19 @@ const FLAGS_R_LOONGARCH: &[Flag<u32>] = &flags!(
     R_LARCH_TLS_LD_PCREL20_S2,
     R_LARCH_TLS_GD_PCREL20_S2,
     R_LARCH_TLS_DESC_PCREL20_S2,
+    R_LARCH_CALL30,
+    R_LARCH_PCADD_HI20,
+    R_LARCH_PCADD_LO12,
+    R_LARCH_GOT_PCADD_HI20,
+    R_LARCH_GOT_PCADD_LO12,
+    R_LARCH_TLS_IE_PCADD_HI20,
+    R_LARCH_TLS_IE_PCADD_LO12,
+    R_LARCH_TLS_LD_PCADD_HI20,
+    R_LARCH_TLS_LD_PCADD_LO12,
+    R_LARCH_TLS_GD_PCADD_HI20,
+    R_LARCH_TLS_GD_PCADD_LO12,
+    R_LARCH_TLS_DESC_PCADD_HI20,
+    R_LARCH_TLS_DESC_PCADD_LO12,
 );
 const FLAGS_NT_CORE: &[Flag<u32>] = &flags!(
     NT_PRSTATUS,
@@ -3582,7 +3607,13 @@ const FLAGS_DT_PPC: &[Flag<u32>] = &flags!(DT_PPC_GOT, DT_PPC_OPT);
 const FLAGS_DT_PPC64: &[Flag<u32>] =
     &flags!(DT_PPC64_GLINK, DT_PPC64_OPD, DT_PPC64_OPDSZ, DT_PPC64_OPT);
 const FLAGS_DT_IA_64: &[Flag<u32>] = &flags!(DT_IA_64_PLT_RESERVE);
+const FLAGS_DT_AARCH64: &[Flag<u32>] = &flags!(
+    DT_AARCH64_BTI_PLT,
+    DT_AARCH64_PAC_PLT,
+    DT_AARCH64_VARIANT_PCS
+);
 const FLAGS_DT_NIOS2: &[Flag<u32>] = &flags!(DT_NIOS2_GP);
+const FLAGS_DT_RISCV: &[Flag<u32>] = &flags!(DT_RISCV_VARIANT_CC);
 const FLAGS_DF: &[Flag<u32>] = &flags!(
     DF_ORIGIN,
     DF_SYMBOLIC,
